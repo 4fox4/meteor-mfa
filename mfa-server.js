@@ -121,10 +121,14 @@ let isExpired = function (expiryDate) {
   return new Date() >= expiryDate;
 };
 
-const generateChallenge = function (userId, type, challengeConnectionHash) {
+const generateChallenge = async function (
+  userId,
+  type,
+  challengeConnectionHash
+) {
   check(challengeConnectionHash, String);
 
-  let user = Meteor.users.findOne(
+  let user = await Meteor.users.findOneAsync(
     { _id: userId },
     {
       fields: {
@@ -167,7 +171,7 @@ const generateChallenge = function (userId, type, challengeConnectionHash) {
   }
 
   let challengeSecret = Random.secret(50);
-  let challengeId = MFAChallenges.insert({
+  let challengeId = await MFAChallenges.insertAsync({
     type,
     userId: user._id,
     expires: new Date(new Date().valueOf() + config.challengeExpiry),
@@ -186,11 +190,11 @@ const generateChallenge = function (userId, type, challengeConnectionHash) {
   };
 };
 
-let verifyAssertion = function (type, { challengeId, credentials }) {
+let verifyAssertion = async function (type, { challengeId, credentials }) {
   check(challengeId, String);
   check(credentials, publicKeyCredentialSchema);
 
-  let challengeObj = MFAChallenges.findOne({ _id: challengeId });
+  let challengeObj = await MFAChallenges.findOneAsync({ _id: challengeId });
 
   const { challenge, keyId } = parseLoginRequest(credentials);
 
@@ -215,9 +219,9 @@ let verifyAssertion = function (type, { challengeId, credentials }) {
   return loggedIn;
 };
 
-let disableMFA = function (userId) {
+let disableMFA = async function (userId) {
   check(userId, String);
-  Meteor.users.update(
+  await Meteor.users.updateAsync(
     { _id: userId },
     {
       $unset: {
@@ -234,9 +238,9 @@ let disableMFA = function (userId) {
   );
 };
 
-let disablePasswordless = function (userId) {
+let disablePasswordless = async function (userId) {
   check(userId, String);
-  Meteor.users.update(
+  await Meteor.users.updateAsync(
     { _id: userId },
     {
       $unset: { "services.passwordlessenabled": true },
@@ -245,8 +249,8 @@ let disablePasswordless = function (userId) {
   );
 };
 
-let enableOTP = function (userId) {
-  let user = Meteor.users.findOne(
+let enableOTP = async function (userId) {
+  let user = await Meteor.users.findOneAsync(
     { _id: userId },
     { fields: { "services.mfaenabled": 1 } }
   );
@@ -255,7 +259,7 @@ let enableOTP = function (userId) {
     throw new Meteor.Error(400, strings.mfaAlreadyEnabledError);
   }
 
-  Meteor.users.update(
+  await Meteor.users.updateAsync(
     { _id: userId },
     {
       $set: {
@@ -317,8 +321,8 @@ This error will be thrown in development, but will only be a warning in
 production.
 `;
 
-let invalidateU2FAuthorization = function (authorizationId) {
-  MFAAuthorizations.update(
+let invalidateU2FAuthorization = async function (authorizationId) {
+  await MFAAuthorizations.updateAsync(
     { _id: authorizationId },
     {
       $set: {
@@ -330,15 +334,18 @@ let invalidateU2FAuthorization = function (authorizationId) {
   );
 };
 
-const invalidateChallenge = function (challengeId) {
+const invalidateChallenge = async function (challengeId) {
   if (config.keepChallenges) {
-    MFAChallenges.update({ _id: challengeId }, { $set: { used: true } });
+    await MFAChallenges.updateAsync(
+      { _id: challengeId },
+      { $set: { used: true } }
+    );
   } else {
-    MFAChallenges.remove({ _id: challengeId });
+    await MFAChallenges.removeAsync({ _id: challengeId });
   }
 };
 
-const verifyChallenge = function (
+const verifyChallenge = async function (
   userId,
   type,
   challengeConnectionHash,
@@ -352,7 +359,7 @@ const verifyChallenge = function (
   check(challengeId, String);
   check(challengeSecret, String);
 
-  let challengeObj = MFAChallenges.findOne({ _id: challengeId });
+  let challengeObj = await MFAChallenges.findOneAsync({ _id: challengeId });
 
   if (userId === null && type !== "login") {
     let err = nullUserIdVerifyChallengeError(type);
@@ -376,7 +383,7 @@ const verifyChallenge = function (
     throw new Meteor.Error(404);
   }
 
-  let user = Meteor.users.findOne({ _id: challengeObj.userId });
+  let user = await Meteor.users.findOneAsync({ _id: challengeObj.userId });
 
   let loggedIn = false;
   if (user.services.mfamethod === "u2f") {
@@ -386,7 +393,7 @@ const verifyChallenge = function (
         challengeSecret: String,
         U2FAuthorizationCode: String,
       });
-      let authorization = MFAAuthorizations.findOne({
+      let authorization = await MFAAuthorizations.findOneAsync({
         $and: [
           { action: type },
           { userId: user._id },
@@ -395,7 +402,7 @@ const verifyChallenge = function (
       });
       loggedIn = u2fAuthorizationIsValid(authorization);
       if (loggedIn) {
-        invalidateU2FAuthorization(authorization._id);
+        await invalidateU2FAuthorization(authorization._id);
       }
     } else {
       check(params, {
@@ -403,7 +410,7 @@ const verifyChallenge = function (
         challengeSecret: String,
         credentials: publicKeyCredentialSchema,
       });
-      loggedIn = verifyAssertion(type, params);
+      loggedIn = await verifyAssertion(type, params);
     }
   }
   if (user.services.mfamethod === "otp") {
@@ -419,7 +426,7 @@ const verifyChallenge = function (
     throw new Meteor.Error(403);
   }
 
-  invalidateChallenge(challengeId);
+  await invalidateChallenge(challengeId);
 
   return user._id;
 };
@@ -434,7 +441,7 @@ Meteor.methods({
 
     const secret = authenticator.generateSecret();
 
-    let registrationId = MFARegistrations.insert({
+    let registrationId = await MFARegistrations.insertAsync({
       secret,
       userId: this.userId,
       method: "totp",
@@ -455,7 +462,7 @@ Meteor.methods({
       throw new Meteor.Error(403);
     }
 
-    let registration = MFARegistrations.findOne({
+    let registration = await MFARegistrations.findOneAsync({
       $and: [{ userId: this.userId }, { _id: registrationId }],
     });
 
@@ -467,7 +474,7 @@ Meteor.methods({
       throw new Meteor.Error(403, "Incorrect Token");
     }
 
-    Meteor.users.update(
+    await Meteor.users.updateAsync(
       { _id: this.userId },
       {
         $set: {
@@ -479,7 +486,7 @@ Meteor.methods({
       }
     );
 
-    MFARegistrations.remove({ _id: registration._id });
+    await MFARegistrations.removeAsync({ _id: registration._id });
 
     return 200;
   },
@@ -521,14 +528,17 @@ Meteor.methods({
     });
 
     if (params.passwordless) {
-      let user = Meteor.users.findOne({ _id: this.userId });
-      let checkPassword = Accounts._checkPassword(user, params.password);
+      let user = await Meteor.users.findOneAsync({ _id: this.userId });
+      let checkPassword = await Accounts._checkPasswordAsync(
+        user,
+        params.password
+      );
       if (checkPassword.error) {
         throw new Meteor.Error(403, strings.incorrectPasswordError);
       }
     }
 
-    MFARegistrations.insert({
+    await MFARegistrations.insertAsync({
       challenge: challengeResponse.challenge,
       userId: this.userId,
       method: "u2f",
@@ -546,7 +556,7 @@ Meteor.methods({
 
     const { key, challenge } = parseRegisterRequest(credentials);
 
-    let registration = MFARegistrations.findOne({
+    let registration = await MFARegistrations.findOneAsync({
       $and: [{ userId: this.userId }, { challenge }],
     });
 
@@ -554,7 +564,7 @@ Meteor.methods({
       throw new Meteor.Error(404);
     }
 
-    let user = Meteor.users.findOne(
+    let user = await Meteor.users.findOneAsync(
       { _id: this.userId },
       {
         fields: { "services.mfaenabled": 1, "services.passwordlessenabled": 1 },
@@ -568,7 +578,7 @@ Meteor.methods({
       throw new Meteor.Error(400, strings.mfaAlreadyEnabledError);
     }
 
-    Meteor.users.update(
+    await Meteor.users.updateAsync(
       { _id: this.userId },
       {
         $set: {
@@ -585,14 +595,14 @@ Meteor.methods({
       }
     );
 
-    MFARegistrations.remove({ _id: registration._id });
+    await MFARegistrations.removeAsync({ _id: registration._id });
 
     return 200;
   },
   [resetPasswordCheckMFARequired()]: async function (token) {
     check(token, String);
 
-    const user = Meteor.users.findOne(
+    const user = await Meteor.users.findOneAsync(
       { "services.password.reset.token": token },
       { fields: { services: 1, emails: 1 } }
     );
@@ -612,7 +622,7 @@ Meteor.methods({
   [resetPasswordChallengeHandler()]: async function (token) {
     check(token, String);
 
-    const user = Meteor.users.findOne(
+    const user = await Meteor.users.findOneAsync(
       { "services.password.reset.token": token },
       { fields: { services: 1, emails: 1 } }
     );
@@ -629,7 +639,7 @@ Meteor.methods({
     }
 
     let challengeConnectionHash = createConnectionHash(this.connection);
-    return generateChallenge(
+    return await generateChallenge(
       user._id,
       "resetPassword",
       challengeConnectionHash
@@ -653,7 +663,7 @@ Meteor.methods({
       )
     );
 
-    let user = Accounts._findUserByQuery(username);
+    let user = await Accounts._findUserByQuery(username);
 
     if (!user) {
       throw new Meteor.Error(404);
@@ -671,28 +681,28 @@ Meteor.methods({
         throw new Meteor.Error("not-passwordless", "Not Passwordless");
       }
     } else {
-      let checkPassword = Accounts._checkPassword(user, password);
+      let checkPassword = await Accounts._checkPasswordAsync(user, password);
       if (checkPassword.error) {
         throw new Meteor.Error(403, strings.incorrectPasswordError);
       }
     }
 
     let challengeConnectionHash = createConnectionHash(this.connection);
-    return generateChallenge(user._id, "login", challengeConnectionHash);
+    return await generateChallenge(user._id, "login", challengeConnectionHash);
   },
   [loginCompletionHandler()]: async function (params) {
     check(params, Object);
     check(params.challengeId, String);
     check(params.challengeSecret, String);
 
-    let userId = verifyChallenge(
+    let userId = await verifyChallenge(
       null,
       "login",
       createConnectionHash(this.connection),
       params
     );
 
-    return Accounts._attemptLogin(this, "login", "", {
+    return await Accounts._attemptLogin(this, "login", "", {
       type: "mfa",
       userId,
     });
@@ -733,7 +743,7 @@ Meteor.methods({
     }
 
     let challengeConnectionHash = createConnectionHash(this.connection);
-    let authorizationId = MFAAuthorizations.insert({
+    let authorizationId = await MFAAuthorizations.insertAsync({
       action: type,
       userId: this.userId,
       authenticated: false,
@@ -742,7 +752,7 @@ Meteor.methods({
 
     return {
       authorizationId,
-      challenge: generateChallenge(
+      challenge: await generateChallenge(
         user._id,
         "authorize:" + authorizationId,
         challengeConnectionHash
@@ -760,7 +770,9 @@ Meteor.methods({
     check(authorizationId, String);
     check(solvedU2FChallenge, solvedU2FChallengeSchema);
 
-    let authorization = MFAAuthorizations.findOne({ _id: authorizationId });
+    let authorization = await MFAAuthorizations.findOneAsync({
+      _id: authorizationId,
+    });
 
     if (
       !this.userId ||
@@ -771,7 +783,7 @@ Meteor.methods({
       throw new Meteor.Error(400);
     }
 
-    verifyChallenge(
+    await verifyChallenge(
       this.userId,
       "authorize:" + authorizationId,
       createConnectionHash(this.connection),
@@ -780,7 +792,7 @@ Meteor.methods({
 
     let code = generateCode();
 
-    MFAAuthorizations.update(
+    await MFAAuthorizations.updateAsync(
       { _id: authorizationId },
       {
         $set: {
@@ -794,7 +806,7 @@ Meteor.methods({
   },
 });
 
-Accounts.validateLoginAttempt((options) => {
+Accounts.validateLoginAttempt(async (options) => {
   if (!options.allowed) {
     return false;
   }
@@ -820,7 +832,7 @@ Accounts.validateLoginAttempt((options) => {
       let params = options.methodArguments[2];
 
       try {
-        verifyChallenge(
+        await verifyChallenge(
           options.user._id,
           "resetPassword",
           createConnectionHash(options.connection),
