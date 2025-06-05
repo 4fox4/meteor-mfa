@@ -14,7 +14,7 @@ Npm.depends({
 });
 
 Package.onUse(function (api) {
-  api.versionsFrom(["2.5.1", "3.0"]);
+  api.versionsFrom(["3.0"]);
   api.use("ecmascript");
   api.use("accounts-base");
   api.use("random");
